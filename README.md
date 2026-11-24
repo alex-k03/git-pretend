@@ -91,8 +91,8 @@ customCommands:
 
 ### Editors
 
-- Neovim: [pretend.nvim](https://github.com/alex-k03/pretend.nvim) adds a picker, opens the
-  diff view and reloads buffers when you are done.
+- Neovim: [pretend.nvim](https://github.com/alex-k03/pretend.nvim) adds a commit picker,
+  `:Pretend`, statusline helpers, and reloads buffers when you start and stop.
 
 Anything else can shell out to `git pretend` and read `git pretend status --porcelain`.
 
@@ -172,10 +172,11 @@ shell or editor, and each `git worktree` can pretend independently.
 It is one POSIX shell script that only needs git (and optionally fzf). Put `git-pretend`
 anywhere on your `PATH` and `git pretend` works.
 
-**Homebrew** (macOS and Linux): not available yet, the tap is coming soon. It will be:
+**Homebrew** (macOS and Linux): **not available yet**, the tap is coming soon. Use curl or a
+clone below for now.
 
 ```sh
-brew install alex-k03/tap/git-pretend
+brew install alex-k03/tap/git-pretend  # NOT AVAILABLE YET: the tap doesn't exist, this fails for now
 ```
 
 **curl**, the latest release into `~/.local/bin`:
