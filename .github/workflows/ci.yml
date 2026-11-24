@@ -1,0 +1,21 @@
+name: CI
+on: [push, pull_request]
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dash (macOS)
+        if: runner.os == 'macOS'
+        run: brew install dash
+      - run: make test
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: make lint

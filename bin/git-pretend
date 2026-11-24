@@ -1,0 +1,346 @@
+#!/bin/sh
+# git-pretend: look at a range of commits as if you had just written it yourself.
+#
+# HEAD is detached at the older commit and the working tree holds the newer commit's files as
+# uncommitted changes, so every tool that understands "my changes" (git status, git diff, editors,
+# gitsigns, lazygit, LSP, test runners, coding agents) works on the range without knowing about
+# ranges. `git pretend done` throws the pretend changes away and puts you back where you were.
+#
+# State lives in the repository's git dir (per worktree), so it survives shells and editors.
+# https://github.com/alex-k03/git-pretend
+set -eu
+
+VERSION=0.1.0
+STATE_VERSION=1
+nl='
+'
+
+usage() {
+	cat <<'EOF'
+usage: git pretend <commit>              pretend you wrote <commit> (diff against its parent)
+       git pretend <old> <new>           pretend you wrote everything from <old> to <new>
+       git pretend <old>..<new>          same, range syntax (an empty side means HEAD)
+       git pretend <base>...<new>        from the merge base, like a pull request
+       git pretend [pick [<log args>]]   choose commits with fzf (Enter: one, Tab: two)
+       git pretend status [--short|--porcelain]
+                                         show what you are pretending (exit 1 if nothing)
+       git pretend done                  discard the pretend changes and go back
+
+While pretending, HEAD is detached at <old> and the working tree is <new>, with every
+change unstaged and new files marked intent-to-add. It is for reading: `done` discards
+edits made meanwhile, saving them as a patch in the git dir first.
+
+Examples:
+  git pretend main...                   review your branch as its pull request
+  git pretend HEAD~3 HEAD               the last three commits as one change
+  git pretend pick --all                pick from every branch
+EOF
+}
+
+say() { printf '%s\n' "$*"; }
+warn() { printf 'git-pretend: %s\n' "$*" >&2; }
+die() {
+	warn "$*"
+	exit 1
+}
+
+describe() { git log -1 --format='%h %s' "$1"; }
+
+# --- repository and state --------------------------------------------------------------------
+
+find_repo() {
+	# One git call, since prompts run this on every redraw while pretending
+	dirs=$(git rev-parse --absolute-git-dir --show-toplevel 2>/dev/null) ||
+		die "not in a git repository with a working tree"
+	git_dir=${dirs%%"$nl"*} top=${dirs#*"$nl"}
+	# Work from the top level so every path below is repository-relative
+	cd "$top"
+	state_dir=$git_dir/pretend
+	state_file=$state_dir/state
+}
+
+# Sets prev_ref (refs/heads/<name>, or empty if HEAD was detached), prev_commit, base, target
+load_state() {
+	[ -f "$state_file" ] || return 1
+	prev_ref='' prev_commit='' base='' target=''
+	while read -r key value; do
+		case $key in
+		prev-ref) prev_ref=$value ;;
+		prev-commit) prev_commit=$value ;;
+		base) base=$value ;;
+		target) target=$value ;;
+		esac
+	done <"$state_file"
+	[ -n "$prev_commit" ] && [ -n "$base" ] && [ -n "$target" ] || die "state file $state_file is corrupt; remove it to start over"
+}
+
+prev_name() {
+	if [ -n "$prev_ref" ]; then say "${prev_ref#refs/heads/}"; else git rev-parse --short "$prev_commit"; fi
+}
+
+# A readable name for a commit: relative to the branch you started on if it can be (main~3),
+# else to any branch, remote branch or tag, else the short hash
+name_commit() {
+	if [ -n "$prev_ref" ] && git name-rev --name-only --no-undefined --refs="$prev_ref" "$1" 2>/dev/null; then
+		return 0
+	fi
+	git name-rev --name-only --no-undefined --refs='refs/heads/*' --refs='refs/remotes/*' --refs='refs/tags/*' "$1" 2>/dev/null |
+		sed -e 's|^remotes/||' -e 's|^tags/||' -e 's|\^0$||' | grep . || git rev-parse --short "$1"
+}
+
+range_name() { say "$(name_commit "$base")..$(name_commit "$target")"; }
+
+untracked() { git ls-files --others --exclude-standard | LC_ALL=C sort; }
+
+resolve() { git rev-parse --verify --quiet "$1^{commit}" 2>/dev/null || die "can't resolve '$1' to a commit"; }
+
+operation_in_progress() {
+	for f in MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD BISECT_LOG rebase-merge rebase-apply; do
+		if [ -e "$(git rev-parse --git-path "$f")" ]; then
+			say "$f"
+			return 0
+		fi
+	done
+	return 1
+}
+
+# --- commands ----------------------------------------------------------------------------------
+
+cmd_start() {
+	if load_state; then
+		die "already pretending $(range_name); run 'git pretend done' first"
+	fi
+
+	case $# in
+	1)
+		case $1 in
+		*...*)
+			a=${1%%...*} b=${1#*...}
+			other=$(resolve "${a:-HEAD}") || exit 1
+			target=$(resolve "${b:-HEAD}") || exit 1
+			base=$(git merge-base "$other" "$target") || die "'${a:-HEAD}' and '${b:-HEAD}' have no common ancestor"
+			;;
+		*..*)
+			a=${1%%..*} b=${1#*..}
+			base=$(resolve "${a:-HEAD}") || exit 1
+			target=$(resolve "${b:-HEAD}") || exit 1
+			;;
+		*)
+			target=$(resolve "$1") || exit 1
+			base=$(git rev-parse --verify --quiet "$target^" 2>/dev/null) || die "'$1' is a root commit, it has no parent to compare with"
+			;;
+		esac
+		;;
+	2)
+		base=$(resolve "$1") || exit 1
+		target=$(resolve "$2") || exit 1
+		;;
+	*)
+		usage >&2
+		exit 2
+		;;
+	esac
+	[ "$base" != "$target" ] || die "both sides are the same commit, so there is nothing to pretend"
+
+	if op=$(operation_in_progress); then
+		die "finish or abort the operation in progress first ($op)"
+	fi
+	# Untracked files are fine: switch leaves them alone, and refuses if one would be overwritten
+	# Captured separately: if git status itself failed, its empty output would look like a clean tree
+	changes=$(git status --porcelain --untracked-files=no) || die "git status failed, so it's unclear whether you have uncommitted changes"
+	[ -z "$changes" ] || die "you have uncommitted changes; commit or stash them first"
+
+	prev_commit=$(git rev-parse --verify --quiet HEAD) || die "HEAD has no commits yet"
+	prev_ref=$(git symbolic-ref -q HEAD || true)
+
+	# State goes first, so an interrupted start is still something 'done' can recover from
+	mkdir -p "$state_dir"
+	untracked >"$state_dir/untracked"
+	{
+		say "version $STATE_VERSION"
+		say "prev-ref $prev_ref"
+		say "prev-commit $prev_commit"
+		say "base $base"
+		say "target $target"
+	} >"$state_file.tmp"
+	mv "$state_file.tmp" "$state_file"
+
+	# The newer commit's files on disk, then HEAD and the index back to the older commit
+	if ! git switch -q --detach "$target"; then
+		rm -rf "$state_dir"
+		die "couldn't check out $(git rev-parse --short "$target"); nothing was changed"
+	fi
+	if ! git reset -q "$base"; then
+		go_back || true
+		rm -rf "$state_dir"
+		die "couldn't reset to $(git rev-parse --short "$base"); went back to $(prev_name)"
+	fi
+	# Files added in the range become intent-to-add, so diffs show them as new rather than
+	# untracked. --no-renames: a renamed file's new path is an addition too. --force: a tracked
+	# file can match .gitignore, and add refuses ignored paths without it.
+	if [ -n "$(git diff --name-only --no-renames --diff-filter=A "$base" "$target" --)" ]; then
+		git diff -z --name-only --no-renames --diff-filter=A "$base" "$target" -- |
+			xargs -0 git add --intent-to-add --force -- ||
+			warn "couldn't mark new files intent-to-add; they will show as untracked"
+	fi
+
+	say "Pretending you wrote $(range_name):"
+	say "  HEAD          $(describe "$base")"
+	say "  working tree  $(describe "$target")"
+	stat=$(git diff --shortstat HEAD)
+	[ -z "$stat" ] || say " $stat"
+	say "Run 'git pretend done' to go back to $(prev_name)."
+}
+
+go_back() {
+	if [ -n "$prev_ref" ]; then
+		git switch -q "${prev_ref#refs/heads/}"
+	else
+		git switch -q --detach "$prev_commit"
+	fi
+}
+
+cmd_done() {
+	[ $# -eq 0 ] || die "'done' takes no arguments"
+	load_state || die "not pretending anything"
+
+	# reset --hard below is only safe in the pretend checkout. If HEAD was moved since (say a
+	# 'git switch main'), the state is stale and resetting would wipe that branch's work.
+	if git symbolic-ref -q HEAD >/dev/null || ! git merge-base --is-ancestor "$base" HEAD; then
+		rm -rf "$state_dir"
+		warn "HEAD was moved since you started pretending, so there was nothing to undo."
+		warn "Cleared the pretend state; your checkout was not touched."
+		return 0
+	fi
+
+	head=$(git rev-parse HEAD)
+	if [ "$head" != "$base" ]; then
+		say "You committed while pretending. Those commits are on no branch; to keep them:"
+		say "  git branch <name> $(git rev-parse --short "$head")"
+	fi
+
+	# Everything that differs from the pretend target counts as an edit made while pretending
+	if ! git diff --quiet "$target" --; then
+		patch_dir=$git_dir/pretend-discarded
+		mkdir -p "$patch_dir"
+		patch=$patch_dir/$(date +%Y-%m-%dT%H-%M-%S).patch
+		git diff --binary "$target" -- >"$patch"
+		say "Discarded your edits; they are saved in $patch"
+		say "  (git apply that file to get them back)"
+	fi
+
+	git reset -q --hard "$target" || die "couldn't reset to the pretend target; nothing else was changed"
+	if ! go_back; then
+		rm -rf "$state_dir"
+		die "couldn't switch back to $(prev_name); you are on $(git rev-parse --short "$target"), detached and clean"
+	fi
+
+	# Git can't tell files made while pretending from ones that were there before, so list them
+	# (comparing with the list from the start) but never delete them
+	created=$(untracked | LC_ALL=C comm -13 "$state_dir/untracked" -)
+	rm -rf "$state_dir"
+	if [ -n "$created" ]; then
+		say "Files created while pretending (left in place):"
+		printf '%s\n' "$created" | sed 's/^/  /'
+	fi
+	say "Back on $(prev_name)."
+}
+
+cmd_status() {
+	format=long
+	case ${1-} in
+	--porcelain) format=porcelain ;;
+	--short) format=short ;;
+	"") ;;
+	*) die "unknown status option '$1'" ;;
+	esac
+	if ! load_state; then
+		[ "$format" != long ] || say "Not pretending anything."
+		exit 1
+	fi
+	case $format in
+	porcelain)
+		cat "$state_file"
+		return 0
+		;;
+	short)
+		prev_name
+		return 0
+		;;
+	esac
+	say "Pretending you wrote $(range_name):"
+	say "  HEAD          $(describe "$base")"
+	say "  working tree  $(describe "$target")"
+	git diff --quiet "$target" -- || say "You have edited files; 'done' saves them as a patch and discards them."
+	say "Run 'git pretend done' to go back to $(prev_name)."
+}
+
+cmd_pick() {
+	command -v fzf >/dev/null 2>&1 || die "no commits given and fzf isn't installed (see 'git pretend -h')"
+	# shellcheck disable=SC2016 # {1} is for fzf, not the shell
+	sel=$(git log --color=always --date=short \
+		--format='%C(yellow)%h%C(reset) %C(green)%ad%C(reset) %s%C(auto)%d%C(reset) %C(dim)%an%C(reset)' "$@" |
+		fzf --ansi --multi=2 --no-sort --layout=reverse --prompt='pretend> ' \
+			--header='Enter: pretend you wrote a commit | Tab two commits, Enter: the range between them' \
+			--preview='git show --stat --color=always {1}' --preview-window=down,50%) || exit 1
+
+	# shellcheck disable=SC2046 # the hashes are single words
+	set -- $(printf '%s\n' "$sel" | cut -d' ' -f1)
+	if [ $# -eq 1 ]; then
+		cmd_start "$1"
+	elif git merge-base --is-ancestor "$1" "$2"; then
+		cmd_start "$1" "$2"
+	elif git merge-base --is-ancestor "$2" "$1"; then
+		cmd_start "$2" "$1"
+	else
+		# Unrelated commits (picked with --all): older first, by commit date
+		# shellcheck disable=SC2046 # the hashes are single words
+		set -- $(git log --no-walk --format=%H "$1" "$2")
+		cmd_start "$2" "$1"
+	fi
+}
+
+# --- main -------------------------------------------------------------------------------------
+
+case ${1-} in
+-h | --help | help)
+	usage
+	exit 0
+	;;
+-V | --version | version)
+	say "git-pretend $VERSION"
+	exit 0
+	;;
+esac
+
+find_repo
+case ${1-} in
+status)
+	shift
+	cmd_status "$@"
+	;;
+done)
+	shift
+	cmd_done "$@"
+	;;
+pick)
+	shift
+	cmd_pick "$@"
+	;;
+--)
+	shift
+	cmd_start "$@"
+	;;
+"")
+	if load_state; then
+		cmd_status
+	elif [ -t 1 ]; then
+		cmd_pick
+	else
+		usage >&2
+		exit 2
+	fi
+	;;
+-*) die "unknown option '$1' (see 'git pretend -h')" ;;
+*) cmd_start "$@" ;;
+esac

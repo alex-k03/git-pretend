@@ -1,0 +1,21 @@
+# Push a tag like v0.1.0 to publish a release with the script attached, which is what
+# https://github.com/alex-k03/git-pretend/releases/latest/download/git-pretend points at.
+name: Release
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the version in the script matches the tag
+        run: test "$(bin/git-pretend --version)" = "git-pretend ${GITHUB_REF_NAME#v}"
+      - run: make test
+      - run: gh release create "$GITHUB_REF_NAME" bin/git-pretend man/git-pretend.1 --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}

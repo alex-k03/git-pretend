@@ -1,0 +1,102 @@
+.TH GIT-PRETEND 1 "2026-11-24" "git-pretend 0.1.0" "Git Manual"
+.SH NAME
+git-pretend \- review a range of commits as if you had just written it
+.SH SYNOPSIS
+.B git pretend
+.I commit
+.br
+.B git pretend
+.I old new
+.br
+.B git pretend
+.IB old .. new
+.br
+.B git pretend
+.IB base ... new
+.br
+.B git pretend
+.RB [ pick
+.RI [ log-args ]]
+.br
+.B git pretend status
+.RB [ \-\-short | \-\-porcelain ]
+.br
+.B git pretend done
+.SH DESCRIPTION
+While pretending, HEAD is detached at the older commit and the working tree holds the newer
+commit's files as uncommitted, unstaged changes, with files added in the range marked
+intent-to-add. Every tool that understands "my changes" (git status, git diff, editor gutters,
+LSP, test runners, coding agents) then works on the range.
+.PP
+Pretending is for reading.
+.B git pretend done
+discards edits made while pretending, saving them first as a patch in
+.IR $GIT_DIR/pretend-discarded/ ,
+and switches back to the branch or commit you started on. Untracked files are never deleted;
+the ones created while pretending are listed.
+.PP
+State is kept in
+.IR $GIT_DIR/pretend/ ,
+per worktree, so it survives closing your shell or editor.
+.SH COMMANDS
+.TP
+.I commit
+Pretend you wrote
+.IR commit :
+HEAD at its parent, working tree at
+.IR commit .
+.TP
+.I old new\fR, \fIold\fB..\fInew
+Pretend you wrote everything from
+.I old
+to
+.IR new .
+An empty side of
+.B ..
+means HEAD.
+.TP
+.IB base ... new
+Start from the merge base of
+.I base
+and
+.IR new ,
+as a pull request of
+.I new
+into
+.I base
+would show it.
+.B git pretend main...
+reviews the current branch.
+.TP
+.BR pick " [\fIlog-args\fR]"
+Choose commits with fzf from
+.B git log
+.IR log-args .
+Enter picks one commit; Tab two commits, then Enter, picks the range between them.
+.B git pretend
+with no arguments does the same when run in a terminal, or shows the status while pretending.
+.TP
+.BR status " [" \-\-short | \-\-porcelain ]
+Show what you are pretending. Exits 0 while pretending and 1 otherwise. With
+.BR \-\-short ,
+prints just the branch you will go back to (or the commit, if you started detached).
+While pretending HEAD is detached, so prompts can show this instead of a commit hash. With
+.BR \-\-porcelain ,
+prints the state as lines of
+.B key value
+.RB ( version ,
+.BR prev-ref ,
+.BR prev-commit ,
+.BR base ,
+.BR target ),
+or nothing.
+.TP
+.B done
+Discard the pretend changes and go back. If HEAD was moved since pretending started, the state is
+cleared and nothing else is touched.
+.SH SEE ALSO
+.BR git-reset (1),
+.BR git-switch (1),
+.BR fzf (1)
+.PP
+https://github.com/alex-k03/git-pretend
