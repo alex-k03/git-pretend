@@ -175,11 +175,10 @@ shell or editor, and each `git worktree` can pretend independently.
 It is one POSIX shell script that only needs git (and optionally fzf). Put `git-pretend`
 anywhere on your `PATH` and `git pretend` works.
 
-**Homebrew** (macOS and Linux): **not available yet**, the tap is coming soon. Use curl or a
-clone below for now.
+**Homebrew** (macOS and Linux):
 
 ```sh
-brew install alex-k03/tap/git-pretend  # NOT AVAILABLE YET: the tap doesn't exist, this fails for now
+brew install alex-k03/tap/git-pretend
 ```
 
 **curl**, the latest release into `~/.local/bin`:
