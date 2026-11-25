@@ -276,6 +276,25 @@ t_ignored_but_tracked_file() {
 	check clean
 }
 
+t_refuses_ignored_collision() {
+	new_repo ignored_collision
+	printf 'historical\n' >local.conf
+	c_tracked=$(commit "track local.conf")
+	git rm -q local.conf
+	printf 'local.conf\n*.log\n' >.gitignore
+	commit "ignore local.conf" >/dev/null
+	printf 'my local config\n' >local.conf
+	printf 'unrelated\n' >other.log
+	check_not pretend "$c_tracked" 2>/dev/null
+	check_eq "$(git symbolic-ref --short HEAD)" "main"
+	check_eq "$(cat local.conf)" "my local config"
+	# Without the colliding file, an unrelated ignored file does not block pretend
+	rm local.conf
+	pretend "$c_tracked" >/dev/null || fail "unrelated ignored file blocked pretend"
+	pretend done >/dev/null
+	check_eq "$(cat other.log)" "unrelated"
+}
+
 t_odd_paths() {
 	new_repo odd
 	printf 'x\n' >'with space.txt'

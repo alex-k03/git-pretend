@@ -1,6 +1,6 @@
 # git-pretend
 
-Review any range of commits as if you had just written it yourself.
+Review your PR in the editor you already use — any range of commits, as if you had just written it yourself.
 
 ![git-pretend demo](demo/demo.gif)
 

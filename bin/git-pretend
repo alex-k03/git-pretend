@@ -153,6 +153,19 @@ cmd_start() {
 	prev_commit=$(git rev-parse --verify --quiet HEAD) || die "HEAD has no commits yet"
 	prev_ref=$(git symbolic-ref -q HEAD || true)
 
+	# Git treats ignored files as disposable and silently overwrites them when checking out a
+	# commit that tracks those paths (and switching back deletes them). Refuse rather than lose
+	# local ignored files like .env or local.conf.
+	if [ -n "$(git diff --name-only --no-renames --diff-filter=A HEAD "$target" --)" ]; then
+		clobbered=$(git diff -z --name-only --no-renames --diff-filter=A HEAD "$target" -- |
+			xargs -0 git ls-files --others --ignored --exclude-standard --)
+		if [ -n "$clobbered" ]; then
+			warn "refusing to overwrite ignored files that are tracked in $(git rev-parse --short "$target"):"
+			printf '%s\n' "$clobbered" | sed 's/^/  /' >&2
+			exit 1
+		fi
+	fi
+
 	# State goes first, so an interrupted start is still something 'done' can recover from
 	mkdir -p "$state_dir"
 	untracked >"$state_dir/untracked"
