@@ -10,7 +10,7 @@
 # https://github.com/alex-k03/git-pretend
 set -eu
 
-VERSION=0.1.0
+VERSION=0.1.1
 STATE_VERSION=1
 nl='
 '
