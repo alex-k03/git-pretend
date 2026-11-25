@@ -2,7 +2,7 @@
 
 Review any range of commits as if you had just written it yourself.
 
-<!-- TODO demo GIF: git pretend main..., then the editor gutter and prompt showing it -->
+![git-pretend demo](demo/demo.gif)
 
 ```sh
 git pretend main...      # your branch, as its pull request would show it
@@ -21,6 +21,8 @@ that range, without needing to know anything about ranges:
 - coding agents asked to "review my changes" review the range
 
 Diff viewers can show you a range, but only this way does the rest of your tooling see it too.
+It refuses dirty working trees, saves any edits made while pretending as a patch on `done`, and
+never deletes untracked files.
 
 ## Usage
 
@@ -105,6 +107,7 @@ which is all a prompt needs to show the branch as usual plus a marker. With [sta
 
 ```toml
 # In your format, replace $git_commit with ${custom.pretend}${custom.git_commit}
+# (and set only_attached = true under [git_branch] if your prompt shows HEAD)
 [custom.pretend]
 description = "git-pretend is on: the branch you will go back to"
 require_repo = true

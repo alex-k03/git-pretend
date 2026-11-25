@@ -276,6 +276,15 @@ cmd_status() {
 }
 
 cmd_pick() {
+	if load_state; then
+		die "already pretending $(range_name); run 'git pretend done' first"
+	fi
+	if op=$(operation_in_progress); then
+		die "finish or abort the operation in progress first ($op)"
+	fi
+	changes=$(git status --porcelain --untracked-files=no) || die "git status failed, so it's unclear whether you have uncommitted changes"
+	[ -z "$changes" ] || die "you have uncommitted changes; commit or stash them first"
+
 	command -v fzf >/dev/null 2>&1 || die "no commits given and fzf isn't installed (see 'git pretend -h')"
 	# shellcheck disable=SC2016 # {1} is for fzf, not the shell
 	sel=$(git log --color=always --date=short \
@@ -334,7 +343,7 @@ pick)
 "")
 	if load_state; then
 		cmd_status
-	elif [ -t 1 ]; then
+	elif [ -t 0 ] && [ -t 1 ]; then
 		cmd_pick
 	else
 		usage >&2
